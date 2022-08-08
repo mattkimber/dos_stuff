@@ -2,23 +2,48 @@
 .model small
 .stack 100h
 
+TIMER_RATE      equ 8000h   ; double the rate of timer interrupts to 36.4/s
+
 dseg segment word public
     assume ds:dseg
 
 prevGfxMode     db 0
 originalKBInt   dd 0
+originalTmrInt  dd 0
 kbState         db 0
 hasBegun        db 0
 xPos            dw 50
 yPos            dw 50
 xDir            db 1
 yDir            db 1
+canDrawNext     db 0
+timerIntCt      db 0
 screenArray     db 64000 dup(0) ; just about get away with this fitting into a segment
 
 dseg ends
 
 cseg segment word public
     assume ds:dseg,cs:cseg
+
+timerInterrupt proc
+    push ax
+    mov canDrawNext, 1      ; timer interrupt has happened so next frame can be drawn
+
+    mov al, timerIntCt      ; check if we should call the BIOS interrupt
+    inc al                  ; (needed to avoid freezing the CPU clock)
+    cmp al, 2               ; we run at 2x speed, so every 2nd call updates BIOS
+    jge doBIOSTimer
+    
+    mov al, 20h             ; tell BIOS we handled the interrupt
+    out 20h, al
+    
+    pop ax
+    iret                    ; return without incrementing BIOS time
+
+doBIOSTimer:
+    pop ax
+    jmp [originalTmrInt]    ; call the original timer interrupt
+timerInterrupt endp
 
 kbInterrupt proc
     push ds             ; save existing ds/ax values
@@ -62,8 +87,44 @@ setupInterrupts proc
     lea dx, kbInterrupt         
     mov ax, 2509h                       ; AH = 25h (set interrupt vector), AL = 09h (keyboard)
     int 21h                             ; DOS interrupt
+
+    pop ds                              ; restore ds for saving timer int handler
+    assume ds:dseg
+    push ds
+
+    mov ax, 3508h                       ; AH = 35h (get interrupt vector), AL = 08h (timer)
+    int 21h                             ; DOS interrupt
+    mov word ptr originalTmrInt, bx     ; store original timer interrupt location
+    mov word ptr originalTmrInt+2, es
+
+    push cs                             ; put the code segment into DS
+    pop ds
+    assume ds:cseg
+
+    lea dx, timerInterrupt         
+    mov ax, 2508h                       ; AH = 25h (set interrupt vector), AL = 08h (timer)
+    int 21h                             ; DOS interrupt
+
     pop ds
     assume ds:dseg
+
+    mov al, 00110110b                   ; timer bits: 00 | 11 | 011 | 0
+                                        ;             |    |    |     |
+                                        ;             |    |    |     |- binary counter
+                                        ;             |    |    |- square wave
+                                        ;             |    |- write LSB followed by MSB
+                                        ;             |- counter 0
+    out 43h, al                         ; 43h = timer control port
+    jmp $+2                             ; tick the CPU so the timer picks up changes
+    mov cx, TIMER_RATE
+    mov al, cl                          ; send LSB
+    out 40h, al
+    jmp $+2
+    mov al, ch                          ; send MSB
+    mov al, ch
+    out 40h, al
+    jmp $+2
+
     sti                                 ; set interrupt flag
     ret
 setupInterrupts endp
@@ -74,6 +135,31 @@ restoreInterrupts proc
     lds dx, originalKBInt   ; restore original kb interrupt adddress
     mov ax, 2509h           ; AH = 25h (set interrupt vector), AL = 09h (keyboard)
     int 21h                 ; DOS interrupt
+
+    pop ds                  ; restore data segment to load the next address
+    push ds
+
+    mov al, 00110110b       ; timer bits: 00 | 11 | 011 | 0
+                            ;             |    |    |     |
+                            ;             |    |    |     |- binary counter
+                            ;             |    |    |- square wave
+                            ;             |    |- write LSB followed by MSB
+                            ;             |- counter 0
+    out 43h, al             ; 43h = timer control port
+    jmp $+2                 ; tick the CPU so the timer picks up changes
+    mov cx, 0               ; restore the original timer value
+    mov al, cl              ; send LSB
+    out 40h, al
+    jmp $+2
+    mov al, ch              ; send MSB
+    mov al, ch
+    out 40h, al
+    jmp $+2
+
+    lds dx, originalTmrInt  ; restore original timer interrupt adddress
+    mov ax, 2508h           ; AH = 25h (set interrupt vector), AL = 08h (timer)
+    int 21h                 ; DOS interrupt
+
     pop ds
     sti
     ret
@@ -210,13 +296,19 @@ bounce proc
     mov bx, 0
 
 startLoop:
-
+    mov canDrawNext, 0
     call clearScreen
 
     inc bx              ; colour cycling
     call moveBox
     call draw
+    call copyScreen
 
+waitForTimer:
+    cmp canDrawNext, 1
+    jnz waitForTimer
+
+checkLoopCt:
     cmp bx, 20
     jnz notReadyYet
     mov al, 1        ; signal at least 20 loops have happened, this is a
@@ -227,7 +319,6 @@ notReadyYet:
     mov al, kbstate
     test al, al      ; check if we should exit due to keyboard state
 
-    call copyScreen
 
     jz startLoop
 
