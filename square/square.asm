@@ -13,6 +13,7 @@ xPos            dw 50
 yPos            dw 50
 xDir            db 1
 yDir            db 1
+screenArray     db 64000 dup(0) ; just about get away with this fitting into a segment
 
 dseg ends
 
@@ -146,7 +147,8 @@ draw proc
     mov bx, 320             ; to get the screen offset
     mul bx
 
-    add ax, xPos            ; add the x coord for the final mem offset
+    add ax, xPos               ; add the x coord for the final mem offset relative to 0
+    add ax, offset screenArray ; add the address of screenArray for the final mem offset
     mov di, ax
 
     pop bx                  ; get the original bx (loop counter)
@@ -159,72 +161,61 @@ draw proc
 
     xor bx, bx
 
-clearTop:
-    push ax                 ; draw a black line at the top of the box
-    xor al, al              ; this erases the previous position without
-    mov cx, 20              ; causing too much flicker
-    rep stosb
-    add di, 300
-    pop ax
-    inc bx
-
 boxLoop:
-    push ax                 ; save the colour to the stack
-    xor al, al              ; draw 1 pixel of black to the left
-    mov cx, 1
-    rep stosb               ; use stosb so we increment di
-    pop ax                  ; restore colour ready to draw
-
-    mov cx, 18              ; 18 pixels of box
+    mov cx, 20              ; 20 pixels of box
     rep stosb               ; write to the screen
-
-    push ax                 ; save the colour to the stack
-    xor al, al              ; paint it black!
-    mov cx, 1 
-    rep stosb
-    pop ax                  ; restore colour ready to draw
-
     add di, 300             ; move to the next vertical line (we already
                             ; incremented 20 pixels, so this is only 300)
-    
-    inc bx                  ; draw 18 rows of box
-    cmp bx, 19
-    jl boxLoop
 
-clearBottom:
-    xor al, al              ; paint it black (again)
-    mov cx, 20              ; draw 20 pixels at the bottom to clear
-    rep stosb               ; old boxes when moving up
-    inc bx
+    inc bx                  ; draw 20 rows of box
+    cmp bx, 21
+    jl boxLoop
 
     pop bx                  ; restore loop vars
     pop cx
     ret
 draw endp
 
+clearScreen proc
+    mov cx, (320*200)/2         ; only need half the screen size as we clear
+    cld                         ; one word at a time
+    mov di, offset screenArray  ; load address of screen array
+    mov ax, 0                   ; set colour to 0 (black)
+    rep stosw                   ; write to video memory
+    ret
+clearScreen endp
+
+copyScreen proc
+    push es                     ; save the old es value
+
+    mov cx, (320*200)/2         ; only need half the screen size as we copy
+    cld                         ; one word at a time
+    
+    mov si, offset screenArray  ; set source pointer ds:si
+
+    mov ax, 0A000h              ; set destination pointer es:di to video memory
+    mov es, ax                  ; (A000:0000)
+    mov di, 0
+    
+    rep movsw                   ; write to video memory
+
+    pop es                      ; bring es back
+    ret
+copyScreen endp
+
 bounce proc
-    mov bx, 0A000h      ; load es with the base address of video RAM
+
+    mov bx, seg dseg    ; load es with the base address of the offscreen buffer
     mov es, bx
     mov bx, 0
 
-clearScreen:
-    mov cx, (320*200)/2 ; only need half the screen size as we clear
-    cld                 ; one word at a time
-    mov di, 0
-    mov ax, 0           ; set colour to 0 (black)
-    rep stosw           ; write to video memory
-
 startLoop:
+
+    call clearScreen
 
     inc bx              ; colour cycling
     call moveBox
-
-    mov cx, 0           ; loop to slow this down for even 8088 CPUs
-drawLoop:
     call draw
-    inc cx
-    cmp cx, 100
-    jle drawLoop
 
     cmp bx, 20
     jnz notReadyYet
@@ -235,6 +226,9 @@ drawLoop:
 notReadyYet:
     mov al, kbstate
     test al, al      ; check if we should exit due to keyboard state
+
+    call copyScreen
+
     jz startLoop
 
 retLoc:    
