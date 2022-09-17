@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 #include <malloc.h> // think this is correct for OpenWatcom
 #include "polygon.h"
@@ -160,25 +161,112 @@ int FillConvexPolygon(struct PointListHeader *vertexList, int colour, int xOffse
 // Scan converts edge from (x1,y1)->(x2,y2), not including the point at (x2,y2)
 static void ScanEdge(int x1, int y1, int x2, int y2, int setXStart, int skipFirst, struct Line **edgePointPtr)
 {
-    int y, deltaX, deltaY;
-    double inverseSlope;
+    int y, deltaX, height, width, advanceAmount, errorTerm;
+    int errorTermAdvance, xMajorAdvanceAmount, i;
     struct Line *workingEdgePointPtr;
 
-    // Calculate x/y lengths of the line and inverse slope
-    deltaX = x2 - x1;
-    if ((deltaY = y2 - y1) <= 0) return; // this edge is 0 length
+    workingEdgePointPtr = *edgePointPtr; // avoid double de-reference
 
-    inverseSlope = (double)deltaX / (double)deltaY;
+    // Which direction x moves in (y2 is always >y1, so y always counts up)
+    advanceAmount= ((deltaX = x2 - x1) > 0) ? 1 : -1;
 
-    // Store the x coordinate of the pixel closest to but not left of line for each Y coord
-    workingEdgePointPtr = *edgePointPtr; // avoid double deref
-    for (y = y1 + skipFirst; y < y2; y++, workingEdgePointPtr++) {
-        // Store x coord in appropriate edge list
-        if (setXStart == 1) {
-            workingEdgePointPtr->xStart = x1 + (int)(ceil((y-y1) * inverseSlope));
-        } else {
-            workingEdgePointPtr->xEnd = x1 + (int)(ceil((y-y1)*inverseSlope));
+    // Return for degenerate edges (0 length or horizontal)
+    if ((height = y2 - y1) <= 0) return;
+
+    // There are four cases remaining for edges:
+    // vertical, diagonal, x-major (mostly horizontal) or y-major (mostly vertical)
+    if ((width = abs(deltaX)) == 0) {
+        // Vertical: special case, store same x co-ord for every scan line
+        for (i = height - skipFirst; i-- > 0; workingEdgePointPtr++) {
+            if(setXStart == 1) {
+                workingEdgePointPtr->xStart = x1;
+            } else {
+                workingEdgePointPtr->xEnd = x1;
+            }
+        }
+    } else if (width == height) {
+        // Diagonal: special case as x can advance by 1 each scan line
+        if (skipFirst) x1 += advanceAmount; // Skip first point if we need to
+        for (i = height - skipFirst; i-- > 0; workingEdgePointPtr++) {
+            if(setXStart == 1) {
+                workingEdgePointPtr->xStart = x1;
+            } else {
+                workingEdgePointPtr->xEnd = x1;
+            }
+            x1 += advanceAmount; // move 1 pixel to left or right
+        }
+    } else if (height > width) {
+        // Y-major: edge is more vertical than horizontal
+
+        // Set the initial error term
+        if (deltaX >=0) errorTerm = 0;
+        else errorTerm = 1 - height;
+
+        if (skipFirst) {
+            // Advance if the error term is positive
+            if ((errorTerm += width) > 0) {
+                x1 += advanceAmount;
+                errorTerm -= height;
+            }
+        }
+
+        // Scan each scan line in turn
+        for (i = height - skipFirst; i-- > 0; workingEdgePointPtr++) {
+            if(setXStart == 1) {
+                workingEdgePointPtr->xStart = x1;
+            } else {
+                workingEdgePointPtr->xEnd = x1;
+            }
+
+            // Advance if the error term is positive
+            if ((errorTerm += width) > 0) {
+                x1 += advanceAmount;
+                errorTerm -= height;
+            }
+        }
+    } else {
+        // Only remaining case: X-major: edge is more horizontal than vertical
+        
+        // Minimum distance to advance X (as line is X-major)
+        xMajorAdvanceAmount = (width / height) * advanceAmount;
+
+        // Error term for when we need to advance by an extra 1
+        errorTermAdvance = width % height;
+
+        // Set the initial error term
+        if(deltaX >= 0) errorTerm = 0;
+        else errorTerm = 1 - height;
+
+        if(skipFirst) {
+            // Advance by the regular amount
+            x1 += xMajorAdvanceAmount;
+
+            // Advance one extra if the error term is positive
+            if ((errorTerm += errorTermAdvance) > 0) {
+                x1 += advanceAmount;
+                errorTerm -= height;
+            }
+        }
+
+        // Scan each scan line in turn
+        for (i = height - skipFirst; i-- > 0; workingEdgePointPtr++) {
+            if(setXStart == 1) {
+                workingEdgePointPtr->xStart = x1;
+            } else {
+                workingEdgePointPtr->xEnd = x1;
+            }
+
+            // Advance by the regular amount
+            x1 += xMajorAdvanceAmount;
+
+            // Advance one extra if the error term is positive
+            if ((errorTerm += errorTermAdvance) > 0) {
+                x1 += advanceAmount;
+                errorTerm -= height;
+            }
         }
     }
-    *edgePointPtr = workingEdgePointPtr; // advance calling function's pointer
+
+    // Advance pointer of calling function for next edge
+    *edgePointPtr = workingEdgePointPtr;
 }
