@@ -1,1 +1,1 @@
-wcl386 -l=dos4g polygon.c fillpoly.c drawline.c
+wcl386 -l=dos4g poly2d.c fillpoly.c drawline.c
