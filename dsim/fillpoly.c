@@ -3,6 +3,7 @@
 #include <math.h>
 #include <malloc.h> // think this is correct for OpenWatcom
 #include "polygon.h"
+#include "vga.h"
 
 #define IDX_FORWARD(index) index = (index + 1) % vertexList->length;
 #define IDX_BACKWARD(index) index = (index - 1 + vertexList->length) % vertexList->length;
@@ -12,6 +13,7 @@
     else index = (index - 1 + vertexList->length) % vertexList->length;
 
 extern void DrawLineList(struct LineList *, int);
+extern void __cdecl ASMDrawLineList(char *, struct LineList *, int);
 static void ScanEdge(int, int, int, int, int, int, struct Line **);
 
 int FillConvexPolygon(struct PointListHeader *vertexList, int colour, int xOffset, int yOffset)
@@ -150,7 +152,8 @@ int FillConvexPolygon(struct PointListHeader *vertexList, int colour, int xOffse
     } while (currentIndex != maxIndex);
 
     // Draw the scan-converted lines
-    DrawLineList(&workingLineList, colour);
+    //DrawLineList(&workingLineList, colour);
+    ASMDrawLineList(backBuffer, &workingLineList, colour);
 
     // Free up the memory used for the working line list
     free(workingLineList.linesPtr);

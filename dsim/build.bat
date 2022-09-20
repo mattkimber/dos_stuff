@@ -1,1 +1,0 @@
-wcl386 -l=dos4g poly2d.c fillpoly.c drawline.c

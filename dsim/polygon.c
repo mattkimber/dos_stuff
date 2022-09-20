@@ -14,6 +14,8 @@
 char *backBuffer;
 
 extern int FillConvexPolygon(struct PointListHeader *vertexList, int colour, int xOffset, int yOffset);
+extern void __cdecl ClearScreen(char *);
+extern void __cdecl CopyScreen(char *);
 
 #define DRAW_POLYGON(pointList,pLength,colour,x,y)     \
     polygon.length = pLength;                          \
@@ -179,13 +181,13 @@ void main()
         TransformAndProjectPoints(workingTransform, &cube);
 
         // Clear the screen
-        memset(backBuffer, 0, SCREEN_WIDTH * SCREEN_HEIGHT);
+        ClearScreen(backBuffer);
 
         // Draw the cube
         DrawVisibleFaces(&cube);
 
         // Copy back buffer to screen
-        memcpy((void *)SCREEN_ADDRESS, (void *)backBuffer, SCREEN_WIDTH * SCREEN_HEIGHT);
+        CopyScreen(backBuffer);
 
         // Rotate by 1 degree, wrapping to 2*pi as necessary
         if ((rotation += (M_PI/180.0)) >= (M_PI * 2)) rotation -= M_PI * 2;
